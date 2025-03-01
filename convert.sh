@@ -2,6 +2,9 @@
 
 #examples:
 
+#remove 3D
+#-vf stereo3d=sbsl:ml -metadata:s:v:0 stereo_mode="mono"
+
 #using vaapi:
 #ffmpeg -y -threads 4 -hwaccel vaapi -vaapi_device /dev/dri/renderD128 -i "$FILE" -map 0 -c:v h264 -bf 0 -vf format=yuv420p,scale=1920:1080 -c:a ac3 -ac 2 "$outputfile" >/dev/null 2>&1
 
@@ -26,18 +29,14 @@ removeString=""
 currentPath=()
 pathString=""
 
-#convert keeping only the preferred language and english
-function convertPreferredLanguage() { 
+function convertOnlyFirst() { #convert only the first stream
 
     case $mode in
     nvdec)
-        ffmpeg -y -hwaccel nvdec -i "$1" -map 0:v -map 0:a:m:language:"$lang" -map 0:a:m:language:eng? -disposition:a:0 default -c:v h264_nvenc -bf 0 -vf scale=1920:1080,setsar=1,format=yuv420p -c:a ac3 -ac 2 "$2" >/dev/null 2>&1
+        ffmpeg -y -hwaccel nvdec -i "$1" -map 0:v:0 -map 0:a -c:v h264_nvenc -bf 0 -vf scale=1920:1080,setsar=1,format=yuv420p -c:a ac3 -ac 2 -c:s copy "$2" >/dev/null 2>&1
         ;;
     cuda)
-        ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i "$1" -map 0:v -map 0:a:m:language:"$lang" -map 0:a:m:language:eng? -disposition:a:0 default -c:v h264_nvenc -bf 0 -pixel_format yuv420p -vf scale_cuda=1920:1080 -c:a ac3 -ac 2 "$2" >/dev/null 2>&1
-        ;;
-    vaapi)
-        ffmpeg -y -threads 4 -hwaccel vaapi -vaapi_device /dev/dri/renderD128 -i "$1" -map 0 -c:v h264 -bf 0 -vf format=yuv420p,scale=1920:1080 -c:a ac3 -ac 2 "$2" >/dev/null 2>&1
+        ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i "$1" -map 0:v:0 -map 0:a -c:v h264_nvenc -bf 0 -pixel_format yuv420p -vf scale_cuda=1920:1080 -c:a ac3 -ac 2 c:s copy "$2" >/dev/null 2>&1
         ;;
     *)
         echo "not implemented mode, please fix"
@@ -48,8 +47,7 @@ function convertPreferredLanguage() {
     return $?
 }
 
-#convert all streams
-function convert() { 
+function convert() { #convert all streams
 
     case $mode in
     nvdec)
@@ -67,15 +65,14 @@ function convert() {
     return $?
 }
 
-#convert only the first stream
-function convertOnlyFirst() { 
+function convertPreferredLanguage() { #convert keeping only the preferred language and english
 
     case $mode in
     nvdec)
-        ffmpeg -y -hwaccel nvdec -i "$1" -map 0:v:0 -map 0:a -c:v h264_nvenc -bf 0 -vf scale=1920:1080,setsar=1,format=yuv420p -c:a ac3 -ac 2 -c:s copy "$2" >/dev/null 2>&1
+        ffmpeg -y -hwaccel nvdec -i "$1" -map 0:v -map 0:a:m:language:"$lang" -map 0:a:m:language:eng? -disposition:a:0 default -c:v h264_nvenc -bf 0 -vf scale=1920:1080,setsar=1,format=yuv420p -c:a ac3 -ac 2 "$2" >/dev/null 2>&1
         ;;
     cuda)
-        ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i "$1" -map 0:v:0 -map 0:a -c:v h264_nvenc -bf 0 -pixel_format yuv420p -vf scale_cuda=1920:1080 -c:a ac3 -ac 2 c:s copy "$2" >/dev/null 2>&1
+        ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i "$1" -map 0:v -map 0:a:m:language:"$lang" -map 0:a:m:language:eng? -disposition:a:0 default -c:v h264_nvenc -bf 0 -pixel_format yuv420p -vf scale_cuda=1920:1080 -c:a ac3 -ac 2 "$2" >/dev/null 2>&1
         ;;
     *)
         echo "not implemented mode, please fix"
@@ -107,7 +104,7 @@ function iterate() {
     grep -Fxq "$dir" "$dbfile"
 
     if [ $? -eq 0 ]; then
-        echo -e "\u2502   \u2514\u2500\u2500\u2500${Yellow}Found in DB, skipping${Color_Off}"
+        echo -e "\u2502   \u2514\u2500\u2500\u2500${Yellow}Found in DB. Skipping folder${Color_Off}"
         return 0
     else
         cd "$1"
@@ -261,13 +258,13 @@ function iterate() {
 
 if [[ "$1" == "--help" ]]; then
     echo "Usage:"
-    echo "$0 --path=<video root path> [--db=<DB file>] [--hwaccel=<hardware acceleration method>] [--lang=<preferred language>] [--remove]"
+    echo "$0 --path=<video root path> --db=<DB file> --hwaccel=<hardware acceleration method> --lang=<preferred language> [--remove]"
     echo ""
     echo "The video root directory is the root which contains all the movies directories"
     echo "The DB file contains a list of already visited folders that must be excluded"
     echo "This script will update the DB at each execution, appending the visited folder names if at least one conversion succeeded"
     echo "If --remove parameter is specified, the script will automatically delete from disk the source file if the conversion is performed with success"
-    echo "The HW acceleration method can be cuda, nvdec, vaapi and none. default=none"
+    echo "The HW acceleration method can be cuda, nvdec, vaapi and none. default=nvdec"
     echo "The lang parameter must contain the preferred language for the audio of the output file. default=eng"
     exit 0
 fi
@@ -308,7 +305,7 @@ done
 #---
 
 if [[ -z "$mode" ]]; then
-    mode="none"
+    mode="nvdec"
 fi
 
 if [[ -z "$lang" ]]; then
@@ -322,7 +319,7 @@ if [[ -z "$dbfile" ]]; then
         echo "DB file not provided, using DB in current directory"
         dbfile=$dbfilehere
     else
-        echo "Error, DB file not found"
+        echo "Error, DB file not provided"
         exit 1
     fi
 fi
@@ -330,7 +327,7 @@ fi
 dbfile=$(realpath "$dbfile") #obtain absolute path
 
 if [[ ! -f "$dbfile" ]]; then
-    echo "Error, DB file not found"
+    echo "DB file not found"
     exit 1
 fi
 
@@ -352,7 +349,7 @@ if [[ $removeMode -eq 1 ]]; then
 fi
 
 echo ""
-echo "Iterating over root directory.."
+echo "Iterating over root directories.."
 echo -e "\u2502"
 
 iterate "$videoroot"
